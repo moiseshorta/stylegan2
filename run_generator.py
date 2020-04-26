@@ -16,6 +16,39 @@ import pretrained_networks
 
 #----------------------------------------------------------------------------
 
+def generate_image_sequence_from_seed_weights(network_pkl, seeds, weights_npy, truncation_psi, minibatch_size=4):
+    all_frame_weights = np.load(weights_npy)
+    assert len(all_frame_weights.shape) == 2
+    assert len(seeds) == all_frame_weights.shape[1]
+
+    print('Loading networks from "%s"...' % network_pkl)
+    _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
+    average_weights = Gs.get_var('dlatent_avg') # [component]
+    print(f'Average weights shape: {average_weights.shape}')
+
+    Gs_syn_kwargs = dnnlib.EasyDict()
+    Gs_syn_kwargs.output_transform = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
+    Gs_syn_kwargs.randomize_noise = False
+    Gs_syn_kwargs.minibatch_size = minibatch_size
+
+    all_input_noise = np.stack([np.random.RandomState(seed).randn(*Gs.input_shape[1:]) for seed in seeds]) # [minibatch, component]
+
+    for frame_num, weights in enumerate(all_frame_weights, 1):
+        print(f'Generating image for frame {frame_num}/{len(all_frame_weights)}')
+        print(f'Weights: {weights}')
+        weighted_noise = weights.reshape(len(all_input_noise), 1) * all_input_noise
+        weighted_sum = np.sum(weighted_noise, axis=0)
+
+        normalised_noise = weighted_sum / np.linalg.norm(weighted_sum, ord=2, keepdims=True)
+        normalised_noise = np.array([normalised_noise])
+
+        layers = Gs.components.mapping.run(normalised_noise, None) # [minibatch, layer, component]
+        layers = average_weights + (layers - average_weights) * truncation_psi # [minibatch, layer, component]
+        images = Gs.components.synthesis.run(layers, **Gs_syn_kwargs) # [minibatch, height, width, channel]
+        PIL.Image.fromarray(images[0], 'RGB').save(dnnlib.make_run_dir_path(f'{frame_num:06d}.png'))
+
+#----------------------------------------------------------------------------
+
 def generate_images(network_pkl, seeds, truncation_psi):
     print('Loading networks from "%s"...' % network_pkl)
     _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
@@ -133,6 +166,13 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     parser_generate_images.add_argument('--truncation-psi', type=float, help='Truncation psi (default: %(default)s)', default=0.5)
     parser_generate_images.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
 
+    parser_generate_images_from_sequence = subparsers.add_parser('generate-image-sequence-from-seed-weights', help='Generate sequence of images based on array of per-seed weights.')
+    parser_generate_images_from_sequence.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
+    parser_generate_images_from_sequence.add_argument('--seeds', type=_parse_num_range, help='List of random seeds', required=True)
+    parser_generate_images_from_sequence.add_argument('--weights', help='Path to serialised np array containing weight sequence for seeds.', dest='weights_npy', required=True)
+    parser_generate_images_from_sequence.add_argument('--truncation-psi', type=float, help='Truncation psi (default: %(default)s)', default=0.5)
+    parser_generate_images_from_sequence.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
+
     parser_style_mixing_example = subparsers.add_parser('style-mixing-example', help='Generate style mixing video')
     parser_style_mixing_example.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
     parser_style_mixing_example.add_argument('--row-seeds', type=_parse_num_range, help='Random seeds to use for image rows', required=True)
@@ -158,7 +198,8 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
 
     func_name_map = {
         'generate-images': 'run_generator.generate_images',
-        'style-mixing-example': 'run_generator.style_mixing_example'
+        'style-mixing-example': 'run_generator.style_mixing_example',
+        'generate-image-sequence-from-seed-weights': 'run_generator.generate_image_sequence_from_seed_weights'
     }
     dnnlib.submit_run(sc, func_name_map[subcmd], **kwargs)
 

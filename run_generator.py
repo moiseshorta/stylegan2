@@ -9,15 +9,23 @@ import numpy as np
 import PIL.Image
 import dnnlib
 import dnnlib.tflib as tflib
+from os import path
 import re
+from scipy.io import wavfile
 import sys
 
 import pretrained_networks
 
 #----------------------------------------------------------------------------
 
-def generate_image_sequence_from_seed_weights(network_pkl, seeds, weights_npy, truncation_psi, minibatch_size=4):
-    all_frame_weights = np.load(weights_npy)
+def generate_image_sequence_from_seed_weights(network_pkl, seeds, weights_path, truncation_psi, minibatch_size=4):
+    _, extension = path.splitext(weights_path)
+    assert extension.lower() in ('.wav', '.npy')
+    
+    if extension == '.wav':
+        _, all_frame_weights = wavfile.read(weights_path)
+    else:
+        all_frame_weights = np.load(weights_path)
     assert len(all_frame_weights.shape) == 2
     assert len(seeds) == all_frame_weights.shape[1]
 
@@ -169,7 +177,7 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     parser_generate_images_from_sequence = subparsers.add_parser('generate-image-sequence-from-seed-weights', help='Generate sequence of images based on array of per-seed weights.')
     parser_generate_images_from_sequence.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
     parser_generate_images_from_sequence.add_argument('--seeds', type=_parse_num_range, help='List of random seeds', required=True)
-    parser_generate_images_from_sequence.add_argument('--weights', help='Path to serialised np array containing weight sequence for seeds.', dest='weights_npy', required=True)
+    parser_generate_images_from_sequence.add_argument('--weights', help='Path to serialised NPY/WAV file containing weight sequence for seeds.', dest='weights_path', required=True)
     parser_generate_images_from_sequence.add_argument('--truncation-psi', type=float, help='Truncation psi (default: %(default)s)', default=0.5)
     parser_generate_images_from_sequence.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
 

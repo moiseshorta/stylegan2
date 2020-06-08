@@ -48,18 +48,24 @@ def generate_periodogram_from_audio(audio_buffer, samples_per_frame, sample_rate
     while True:
         if len(audio_buffer) < samples_per_frame:
             time.sleep(0.001)
+            continue
 
-        audio =  mp.array([audio_buffer.pop() for _ in range(samples_per_frame)])
+        audio =  np.array([audio_buffer.pop() for _ in range(samples_per_frame)])
         audio_mono = np.sum(audio, axis=1)
+        print(f'{len(audio_buffer)} samples left in buffer')
 
         periodogram = welch_periodogram(audio_mono, sample_rate, bin_count)
-        print(f'periodogram shape: {periodogram.shape}')
-        assert periodogram.shape == (samples_per_frame, bin_count)
+        print(f'Raw periodogram shape: {periodogram.shape}')
+        periodogram_split = aggressive_array_split(periodogram, bin_count)
+        print(f'Split periodogram length: {len(periodogram_split)}')
+        periodogram_summed = np.sum(periodogram_split, axis=1)
+        print(f'Summed periodogram shape: {periodogram_summed.shape}')
+        assert periodogram_summed.shape == (bin_count,)
 
-        yield  periodogram
+        yield  periodogram_summed
 
 
-def generate_images(network_pkl, seeds, truncation_psi, peridogram_generator, minibatch_size=4):
+def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, minibatch_size=4):
     print('Loading networks from "%s"...' % network_pkl)
     _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
     average_weights = Gs.get_var('dlatent_avg') # [component]
@@ -76,7 +82,6 @@ def generate_images(network_pkl, seeds, truncation_psi, peridogram_generator, mi
         print(f'Weights: {weights}')
         weighted_noise = weights.reshape(len(all_input_noise), 1) * all_input_noise
         weighted_sum = np.sum(weighted_noise, axis=0)
-
         normalised_noise = weighted_sum / np.linalg.norm(weighted_sum, ord=2, keepdims=True)
         normalised_noise = np.array([normalised_noise])
 
@@ -99,7 +104,7 @@ def generate_images(network_pkl, seeds, truncation_psi, peridogram_generator, mi
 @click.option('--samples-per-frame', default=2048)
 @click.option('--sample-rate', default=48000)
 def visualise(jack_output_name, network_pkl, seeds, truncation_psi, samples_per_frame, sample_rate):
-    seeds = [seed for seed in ','.split(seeds) if seed]
+    seeds = [int(seed.strip()) for seed in seeds.split(',') if seed]
 
     client = jack.Client('StyleGan Visualiser')
     input_one = client.inports.register('in_1')
@@ -112,12 +117,15 @@ def visualise(jack_output_name, network_pkl, seeds, truncation_psi, samples_per_
     def process(frame_count):
         nonlocal raw_audio
 
-        channel_one_raw, channel_two_raw = client.inports
-        channel_one = unpack_bytes(channel_one_raw[:], frame_count)
-        channel_two = unpack_bytes(channel_two_raw[:], frame_count)
+        buffer_one = unpack_bytes(
+            input_one.get_buffer()[:], frame_count
+        )
+        buffer_two = unpack_bytes(
+            input_two.get_buffer()[:], frame_count
+        )
  
-        for sample_one, sample_two in zip(channel_one, channel_two):
-            raw_audio.append_left((sample_one, sample_two))
+        for sample_one, sample_two in zip(buffer_one, buffer_two):
+            raw_audio.appendleft((sample_one, sample_two))
 
     root = tk.Tk()
     panel = tk.Label(root)
@@ -141,6 +149,8 @@ def visualise(jack_output_name, network_pkl, seeds, truncation_psi, samples_per_
 
             # To prevent GC getting rid of image?
             panel.image = gui_image
+
+            root.update()
 
 
 if __name__ == '__main__':

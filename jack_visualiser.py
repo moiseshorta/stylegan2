@@ -136,7 +136,7 @@ def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, m
     '--seeds', 
     type=str, 
     help=(
-        'Comma-separated list of network input seeds. '
+        'Comma-separated list or dash-separated range of network input seeds. '
         'These seeds are mapped onto frequency "bins" for audio. '
         'The first seed is mapped onto the lowest frequency bin and the last onto the highest. '
         'Generally, the more seeds you specify, the more detailed your visualisation. '

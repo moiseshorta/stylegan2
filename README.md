@@ -1,7 +1,7 @@
 ## JACK visualiser 
 
 The script `jack_visualiser.py` should allow you to visualise a spectrogram
-of the outpout of a JACK server.
+of the output of a JACK server.
 
 
 ### Requiremnts
@@ -23,16 +23,16 @@ Options:
                                   Algorithm used to compute spectral density.
                                   [required]
 
-  -s, --seeds TEXT                Comma-separated list of network input seeds.
-                                  These seeds are mapped onto frequency "bins"
-                                  for audio. The first seed is mapped onto the
-                                  lowest frequency bin and the last onto the
-                                  highest. Generally, the more seeds you
-                                  specify, the more detailed your
-                                  visualisation. Unless you're working with
-                                  exceptionally high-frequency audio, you're
-                                  mainly going to see images based on first
-                                  few seeds.
+  -s, --seeds TEXT                Comma-separated list or dash-separated range
+                                  of network input seeds. These seeds are
+                                  mapped onto frequency "bins" for audio. The
+                                  first seed is mapped onto the lowest
+                                  frequency bin and the last onto the highest.
+                                  Generally, the more seeds you specify, the
+                                  more detailed your visualisation. Unless
+                                  you're working with exceptionally high-
+                                  frequency audio, you're mainly going to see
+                                  images based on first few seeds.
 
   --truncation-psi FLOAT          Psi value used for StyleGAN's truncation
                                   trick. Lower values result in images closer

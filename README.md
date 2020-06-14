@@ -1,7 +1,7 @@
 ## JACK visualiser 
 
 The script `jack_visualiser.py` should allow you to visualise a spectrogram
-of the output of a JACK server.
+of the output of a JACK client.
 
 
 ### Requiremnts

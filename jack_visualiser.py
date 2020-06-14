@@ -28,7 +28,7 @@ def unpack_bytes(byte_string, int_count):
 
 
 def aggressive_array_split(array, parts):
-    # Potentially exclude some indeces to get equal bins
+    """Potentially exclude some indeces to split an array of any shape."""
     end_index = len(array) - (len(array) % parts)
     return np.split(array[:end_index], parts)
 
@@ -44,13 +44,13 @@ def welch_periodogram(samples, sample_rate, bin_count):
     return spectral_density
 
 
-def generate_periodogram_from_audio(audio_buffer, samples_per_frame, sample_rate, bin_count):
+def generate_periodogram_from_audio(audio_buffer, samples_per_image, sample_rate, bin_count):
     while True:
-        if len(audio_buffer) < samples_per_frame:
+        if len(audio_buffer) < samples_per_image:
             time.sleep(0.001)
             continue
 
-        audio =  np.array([audio_buffer.pop() for _ in range(samples_per_frame)])
+        audio =  np.array([audio_buffer.pop() for _ in range(samples_per_image)])
         audio_mono = np.sum(audio, axis=1)
         print(f'{len(audio_buffer)} samples left in buffer')
 
@@ -92,25 +92,52 @@ def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, m
 
 
 @click.command()
-@click.argument('jack_output_name')
+@click.argument('jack_client_name')
 @click.argument('network_pkl')
 @click.option(
     '-s', 
     '--seeds', 
     type=str, 
-    help='Comma-separated list of network input seeds. (Low-frequency to high-frequency.)'
+    help=(
+        'Comma-separated list of network input seeds. '
+        'These seeds are mapped onto frequency "bins" for audio. '
+        'The first seed is mapped onto the lowest frequency bin and the last onto the highest. '
+        'Generally, the more seeds you specify, the more detailed your visualisation. '
+        'Unless you\'re working with exceptionally high-frequency audio, '
+        'you\'re mainly going to see images based on first few seeds. '
+    )
 )
-@click.option('-p', '--truncation-psi', default=0.75)
-@click.option('--samples-per-frame', default=2048)
-@click.option('--sample-rate', default=48000)
-def visualise(jack_output_name, network_pkl, seeds, truncation_psi, samples_per_frame, sample_rate):
+@click.option(
+    '--truncation-psi', 
+    default=0.75,
+    help=(
+        'Psi value used for StyleGAN\'s truncation trick. '
+        'Lower values result in images closer to an "average" of what the network has learned; '
+        'these images tend to be better quality but less varied. '
+        'Conversely, a higher value leads to more varied but potentially lower quality images.'
+    )
+)
+@click.option(
+   '--samples-per-image', 
+   default=2048,
+   help=(
+       'How many samples of audio to use for each generated image. '
+       'With the default value of 2048 and sample rate of 48000 you '
+       'should see around 23.4 FPS. '
+       'You may need to make this value higher to reduce latency.'
+       'This value should ideally be kept to multiples of 1024, '
+       'or whatever the size audio frames coming from JACK happens to be.'
+   )
+)
+@click.option('--sample-rate', default=48000, help='JACK sample rate.')
+def visualise(jack_client_name, network_pkl, seeds, truncation_psi, samples_per_image, sample_rate):
     seeds = [int(seed.strip()) for seed in seeds.split(',') if seed]
 
     client = jack.Client('StyleGan Visualiser')
     input_one = client.inports.register('in_1')
     input_two = client.inports.register('in_2')
-    external_output_one = client.get_port_by_name(f'{jack_output_name}:out_1')
-    external_output_two = client.get_port_by_name(f'{jack_output_name}:out_2')
+    external_output_one = client.get_port_by_name(f'{jack_client_name}:out_1')
+    external_output_two = client.get_port_by_name(f'{jack_client_name}:out_2')
 
     raw_audio = deque()
     @client.set_process_callback
@@ -133,7 +160,7 @@ def visualise(jack_output_name, network_pkl, seeds, truncation_psi, samples_per_
 
     periodogram_gen = generate_periodogram_from_audio(
         raw_audio,
-        samples_per_frame,
+        samples_per_image,
         sample_rate,
         len(seeds)
     )

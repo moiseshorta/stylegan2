@@ -22,7 +22,17 @@ import dnnlib.tflib as tflib
 import pretrained_networks
 
 
-def unpack_bytes(byte_string, int_count):
+def _parse_num_range(int_list_or_range):
+    """Accept either a comma separated list of numbers 'a,b,c' or a range 'a-c' and return as a list of ints."""
+    range_re = re.compile(r'^(\d+)-(\d+)$')
+    match = range_re.match(int_list_or_range)
+    if match:
+        return list(range(int(match.group(1)), int(match.group(2))+1))
+
+    return [int(num.strip()) for num in int_list_or_range.split(',') if num]
+
+
+def _unpack_bytes(byte_string, int_count):
     """Unpacks a byte string to 32 bit little endian integers."""
     return struct.unpack(f'<{int_count}l', byte_string)
 
@@ -33,8 +43,15 @@ def aggressive_array_split(array, parts):
     return np.split(array[:end_index], parts)
 
 
+def simple_periodogram(samples, sample_rate, *args, **kwargs):
+    print(f'Running simple periodogram over {samples.size} samples...')
+    _, spectral_density = signal.periodogram(samples, sample_rate, return_onesided=True)
+    return spectral_density
+
+
 def welch_periodogram(samples, sample_rate, bin_count):
-    segment_size = int(samples.size / bin_count)
+    print(f'Running welch periodogram over {samples.size} samples...')
+    segment_size = int(samples.size / bin_count) / 2
     _, spectral_density = signal.welch(
         samples,
         sample_rate,
@@ -44,7 +61,13 @@ def welch_periodogram(samples, sample_rate, bin_count):
     return spectral_density
 
 
-def generate_periodogram_from_audio(audio_buffer, samples_per_image, sample_rate, bin_count):
+PERIODOGRAM_FUNCTION_MAP = {
+    'simple': simple_periodogram,
+    'welch': welch_periodogram,
+}
+
+
+def generate_periodogram_from_audio(periodogram_function, audio_buffer, samples_per_image, sample_rate, bin_count):
     while True:
         if len(audio_buffer) < samples_per_image:
             time.sleep(0.001)
@@ -54,15 +77,22 @@ def generate_periodogram_from_audio(audio_buffer, samples_per_image, sample_rate
         audio_mono = np.sum(audio, axis=1)
         print(f'{len(audio_buffer)} samples left in buffer')
 
-        periodogram = welch_periodogram(audio_mono, sample_rate, bin_count)
-        print(f'Raw periodogram shape: {periodogram.shape}')
-        periodogram_split = aggressive_array_split(periodogram, bin_count)
-        print(f'Split periodogram length: {len(periodogram_split)}')
-        periodogram_summed = np.sum(periodogram_split, axis=1)
-        print(f'Summed periodogram shape: {periodogram_summed.shape}')
-        assert periodogram_summed.shape == (bin_count,)
+        periodogram = periodogram_function(audio_mono, sample_rate, bin_count)
+        print(f'Raw periodogram size: {periodogram.size}')
 
-        yield  periodogram_summed
+        if periodogram.size == bin_count:
+            yield periodogram
+        if periodogram.size > bin_count:
+            periodogram_split = aggressive_array_split(periodogram, bin_count)
+            periodogram_summed = np.sum(periodogram_split, axis=1)
+            print(f'Split and summed periodogram size: {periodogram_summed.size}')
+            assert periodogram_summed.size == bin_count
+            yield  periodogram_summed
+        else:
+            raise ValueError(
+                "Too many seeds! "
+                "Please specify {peridogram.size} or fewer seeds, or increase samples per image."
+            )
 
 
 def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, minibatch_size=4):
@@ -79,7 +109,7 @@ def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, m
     all_input_noise = np.stack([np.random.RandomState(seed).randn(*Gs.input_shape[1:]) for seed in seeds]) # [minibatch, component]
     
     for weights in periodogram_generator:
-        print(f'Weights: {weights}')
+        print(f'Weights:\n{weights}')
         weighted_noise = weights.reshape(len(all_input_noise), 1) * all_input_noise
         weighted_sum = np.sum(weighted_noise, axis=0)
         normalised_noise = weighted_sum / np.linalg.norm(weighted_sum, ord=2, keepdims=True)
@@ -94,6 +124,13 @@ def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, m
 @click.command()
 @click.argument('jack_client_name')
 @click.argument('network_pkl')
+@click.option(
+    '-p',
+    '--periodogram',
+    type=click.Choice(PERIODOGRAM_FUNCTION_MAP.keys()),
+    required=True,
+    help='Algorithm used to compute spectral density.'
+)
 @click.option(
     '-s', 
     '--seeds', 
@@ -130,8 +167,9 @@ def generate_images(network_pkl, seeds, truncation_psi, periodogram_generator, m
    )
 )
 @click.option('--sample-rate', default=48000, help='JACK sample rate.')
-def visualise(jack_client_name, network_pkl, seeds, truncation_psi, samples_per_image, sample_rate):
-    seeds = [int(seed.strip()) for seed in seeds.split(',') if seed]
+def visualise(jack_client_name, network_pkl, periodogram, seeds, truncation_psi, samples_per_image, sample_rate):
+    periodogram_function = PERIODOGRAM_FUNCTION_MAP[periodogram]
+    seeds = _parse_num_range(seeds)
 
     client = jack.Client('StyleGan Visualiser')
     input_one = client.inports.register('in_1')
@@ -144,10 +182,10 @@ def visualise(jack_client_name, network_pkl, seeds, truncation_psi, samples_per_
     def process(frame_count):
         nonlocal raw_audio
 
-        buffer_one = unpack_bytes(
+        buffer_one = _unpack_bytes(
             input_one.get_buffer()[:], frame_count
         )
-        buffer_two = unpack_bytes(
+        buffer_two = _unpack_bytes(
             input_two.get_buffer()[:], frame_count
         )
  
@@ -159,6 +197,7 @@ def visualise(jack_client_name, network_pkl, seeds, truncation_psi, samples_per_
     panel.pack(side='bottom', fill='both', expand='yes')
 
     periodogram_gen = generate_periodogram_from_audio(
+        periodogram_function,
         raw_audio,
         samples_per_image,
         sample_rate,
